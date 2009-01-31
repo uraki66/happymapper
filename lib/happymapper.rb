@@ -63,37 +63,27 @@ module HappyMapper
       options = {
         :single => false,
         :use_default_namespace => false,
-        :use_slash => nil,
       }.merge(o)
       
+      namespace = "default_ns:" if options[:use_default_namespace]
       doc = xml.is_a?(LibXML::XML::Node) ? xml : xml.to_libxml_doc
-      
-      node = doc.respond_to?(:root) ? doc.root : doc
-      
-      # turn off ':use_default_namespace' option if doc doesn't have a default namespace
-      if options[:use_default_namespace] && node.namespaces.default.nil? 
-        warn ":use_default_namespace specified but XML has no default namespace, option ignored"
-        options[:use_default_namespace] = namespace = nil 
-      end
-
-      # if doc has a default namespace, turn on ':use_default_namespace' & set default_prefix for LibXML
-      unless node.namespaces.default.nil?
-        options[:use_default_namespace] = true 
-        namespace = "default_ns:" 
-        node.namespaces.default_prefix = namespace.chop
-        warn "Default XML namespace present -- results are unpredictable" 
-      end
-
-      # if not using default namespace, get our namespace prefix (if we have one) (thanks to LibXML)
-      if node.namespaces.to_a.size > 0 && namespace.nil? && !node.namespaces.namespace.nil?
-        namespace = node.namespaces.namespace.prefix + ":" 
-      end
       
       nodes = if namespace
         node = doc.respond_to?(:root) ? doc.root : doc
-        node.find("#{options[:use_slash]}#{namespace}#{get_tag_name}")
+        node.register_default_namespace(namespace.chop)
+        node.find("#{namespace}#{get_tag_name}")
       else
         doc.find("//#{get_tag_name}")
+      end
+
+      nodes = if namespace
+        node = doc.respond_to?(:root) ? doc.root : doc
+        node.register_default_namespace(namespace.chop)
+        node.find("#{namespace}#{get_tag_name}")
+      else
+        nested = '.' unless doc.respond_to?(:root)
+        path = "#{nested}//#{get_tag_name}"
+        doc.find(path)
       end
 
       collection = create_collection(nodes, namespace)
