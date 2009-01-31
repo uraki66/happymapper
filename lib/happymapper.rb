@@ -89,13 +89,24 @@ module HappyMapper
         namespaces.default_prefix = DEFAULT_NS
         namespace ||= DEFAULT_NS
       end
+      
+      # automatic namespace handling 
+      # Set namespace if no namespace supplied and doc has a non-default namespace where we are searching
+      if namespace.nil? && namespaces.any? && !namespaces.namespace.nil?
+        namespace = namespaces.namespace.prefix 
+      end
 
       xpath = root ? '/' : './/'
       xpath += "#{namespace}:" if namespace
       xpath += tag_name
       # puts "parse: #{xpath}"
       
-      nodes = node.find(xpath)
+      begin
+        nodes = node.find(xpath)
+      rescue LibXML::XML::Error
+        puts "Failing xpath value: #{xpath}"
+        exit 1
+      end
       collection = nodes.collect do |n|
         obj = new
         
