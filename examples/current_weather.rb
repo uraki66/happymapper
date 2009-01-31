@@ -5,10 +5,12 @@ file_contents = File.read(dir + '/../spec/fixtures/current_weather.xml')
 
 class CurrentWeather
   include HappyMapper
-  tag 'aws:ob'
-  element :temperature, Integer, :tag => 'aws:temp'
-  element :feels_like, Integer, :tag => 'aws:feels-like'
-  element :current_condition, String, :tag => 'aws:current-condition', :attributes => {:icon => String}
+  
+  tag 'ob'
+  namespace 'aws'
+  element :temperature, Integer, :tag => 'temp'
+  element :feels_like, Integer, :tag => 'feels-like'
+  element :current_condition, String, :tag => 'current-condition', :attributes => {:icon => String}
 end
 
 CurrentWeather.parse(file_contents).each do |current_weather|

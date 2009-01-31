@@ -4,16 +4,15 @@ $:.unshift(dir) unless $:.include?(dir) || $:.include?(File.expand_path(dir))
 require 'date'
 require 'time'
 require 'rubygems'
-
-gem 'libxml-ruby', '>= 0.9.7'
+gem 'libxml-ruby', '= 0.9.8'
 require 'xml'
-require 'libxml_ext/libxml_helper'
-
 
 class Boolean; end
 
 module HappyMapper
-  
+
+  DEFAULT_NS = "happymapper"
+
   def self.included(base)
     base.instance_variable_set("@attributes", {})
     base.instance_variable_set("@elements", {})
@@ -25,7 +24,7 @@ module HappyMapper
       attribute = Attribute.new(name, type, options)
       @attributes[to_s] ||= []
       @attributes[to_s] << attribute
-      create_accessor(attribute.name)
+      attr_accessor attribute.method_name.intern
     end
     
     def attributes
@@ -36,7 +35,7 @@ module HappyMapper
       element = Element.new(name, type, options)
       @elements[to_s] ||= []
       @elements[to_s] << element
-      create_accessor(element.name)
+      attr_accessor element.method_name.intern
     end
     
     def elements
@@ -50,81 +49,78 @@ module HappyMapper
     def has_many(name, type, options={})
       element name, type, {:single => false}.merge(options)
     end
-    
+
+    # Specify a namespace if a node and all its children are all namespaced
+    # elements. This is simpler than passing the :namespace option to each
+    # defined element.
+    def namespace(namespace = nil)
+      @namespace = namespace if namespace
+      @namespace
+    end
+
     def tag(new_tag_name)
       @tag_name = new_tag_name.to_s
     end
     
-    def get_tag_name
-      @tag_name ||= to_s.downcase
+    def tag_name
+      @tag_name ||= to_s.split('::')[-1].downcase
     end
-    
-    def parse(xml, o={})
-      options = {
-        :single => false,
-        :use_default_namespace => false,
-      }.merge(o)
-      
-      namespace = "default_ns:" if options[:use_default_namespace]
-      doc = xml.is_a?(LibXML::XML::Node) ? xml : xml.to_libxml_doc
-      
-      nodes = if namespace
-        node = doc.respond_to?(:root) ? doc.root : doc
-        node.register_default_namespace(namespace.chop)
-        node.find("#{namespace}#{get_tag_name}")
+        
+    def parse(xml, options = {})
+      # locally scoped copy of namespace for this parse run
+      namespace = @namespace
+
+      if xml.is_a?(XML::Node)
+        node = xml
       else
-        doc.find("//#{get_tag_name}")
+        if xml.is_a?(XML::Document)
+          node = xml.root
+        else
+          node = XML::Parser.string(xml).parse.root
+        end
+
+        root = node.name == tag_name
       end
 
-      nodes = if namespace
-        node = doc.respond_to?(:root) ? doc.root : doc
-        node.register_default_namespace(namespace.chop)
-        node.find("#{namespace}#{get_tag_name}")
-      else
-        nested = '.' unless doc.respond_to?(:root)
-        path = "#{nested}//#{get_tag_name}"
-        doc.find(path)
+      # This is the entry point into the parsing pipeline, so the default
+      # namespace prefix registered here will propagate down
+      namespaces = node.namespaces
+      if namespaces && namespaces.default
+        namespaces.default_prefix = DEFAULT_NS
+        namespace ||= DEFAULT_NS
       end
 
-      collection = create_collection(nodes, namespace)
+      xpath = root ? '/' : './/'
+      xpath += "#{namespace}:" if namespace
+      xpath += tag_name
+      # puts "parse: #{xpath}"
       
+      nodes = node.find(xpath)
+      collection = nodes.collect do |n|
+        obj = new
+        
+        attributes.each do |attr| 
+          obj.send("#{attr.method_name}=", 
+                    attr.from_xml_node(n, namespace))
+        end
+        
+        elements.each do |elem|
+          obj.send("#{elem.method_name}=", 
+                    elem.from_xml_node(n, namespace))
+        end
+
+        obj
+      end
+
       # per http://libxml.rubyforge.org/rdoc/classes/LibXML/XML/Document.html#M000354
       nodes = nil
-      GC.start
-      
-      options[:single] ? collection.first : collection
+
+      if options[:single] || root
+        collection.first
+      else
+        collection
+      end
     end
-    
-    private
-      def create_collection(nodes, namespace=nil)
-        nodes.inject([]) do |acc, el|
-          obj = new
-          attributes.each { |attr| obj.send("#{attr.name}=", attr.from_xml_node(el)) }
-          elements.each   { |elem| obj.send("#{elem.name}=", elem.from_xml_node(el, namespace)) }
-          acc << obj
-        end
-      end
-      
-      def create_getter(name)
-        class_eval <<-EOS, __FILE__, __LINE__
-          def #{name}
-            @#{name}
-          end
-        EOS
-      end
-
-      def create_setter(name)
-        class_eval <<-EOS, __FILE__, __LINE__
-          def #{name}=(value)
-            @#{name} = value
-          end
-        EOS
-      end
-
-      def create_accessor(name)
-        create_getter(name)
-        create_setter(name)
-      end
   end
 end
 

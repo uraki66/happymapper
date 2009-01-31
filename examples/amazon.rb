@@ -3,6 +3,8 @@ require File.join(dir, 'happymapper')
 
 file_contents = File.read(dir + '/../spec/fixtures/pita.xml')
 
+# The document `pita.xml` contains both a default namespace and the 'georss'
+# namespace (for the 'point' element).
 module PITA
   class Item
     include HappyMapper
@@ -11,6 +13,9 @@ module PITA
     element :asin, String, :tag => 'ASIN'
     element :detail_page_url, String, :tag => 'DetailPageURL'
     element :manufacturer, String, :tag => 'Manufacturer', :deep => true
+    # this is the only element that exists in a different namespace, so it
+    # must be explicitly specified
+    element :point, String, :tag => 'point', :namespace => 'georss'
   end
 
   class Items
@@ -23,7 +28,7 @@ module PITA
   end
 end
 
-item = PITA::Items.parse(file_contents, :single => true, :use_default_namespace => true)
+item = PITA::Items.parse(file_contents, :single => true)
 item.items.each do |i|
   puts i.asin, i.detail_page_url, i.manufacturer, ''
 end

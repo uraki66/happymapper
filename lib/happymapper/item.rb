@@ -1,33 +1,64 @@
 module HappyMapper
   class Item
-    attr_accessor :type, :tag, :options
-    attr_reader :name
+    attr_accessor :name, :type, :tag, :options, :namespace
     
     Types = [String, Float, Time, Date, DateTime, Integer, Boolean]
     
     # options:
     #   :deep   =>  Boolean False to only parse element's children, True to include
     #               grandchildren and all others down the chain (// in expath)
+    #   :namespace => String Element's namespace if it's not the global or inherited
+    #                  default
+    #   :parser =>  Symbol Class method to use for type coercion.
+    #   :raw    =>  Boolean Use raw node value (inc. tags) when parsing.
     #   :single =>  Boolean False if object should be collection, True for single object
+    #   :tag    =>  String Element name if it doesn't match the specified name.
     def initialize(name, type, o={})
-      self.name, self.type, self.tag = name, type, o.delete(:tag) || name.to_s
-      self.options = {:single => false, :deep => false}.merge(o)
+      self.name = name.to_s
+      self.type = type
+      self.tag = o.delete(:tag) || name.to_s
+      self.options = o
+      
       @xml_type = self.class.to_s.split('::').last.downcase
     end
-    
-    def name=(new_name)
-      @name = new_name.to_s
-    end
         
-    def from_xml_node(node, namespace = nil)
+    def from_xml_node(node, namespace)
       if primitive?
-        value_from_xml_node(node, namespace) do |value_before_type_cast|
-          typecast(value_before_type_cast)
+        find(node, namespace) do |n|
+          if n.respond_to?(:content)
+            typecast(n.content)
+          else
+            typecast(n.to_s)
+          end
         end
       else
-        use_default_namespace = !namespace.nil?
-        type.parse(node, options.merge(:use_default_namespace => use_default_namespace))
+        if options[:parser]
+          find(node, namespace) do |n|
+            if n.respond_to?(:content) && !options[:raw]
+              value = n.content
+            else
+              value = n.to_s
+            end
+
+            begin
+              type.send(options[:parser].to_sym, value)
+            rescue
+              nil
+            end
+          end
+        else
+          type.parse(node, options)
+        end
       end
+    end
+    
+    def xpath(namespace = self.namespace)
+      xpath  = ''
+      xpath += './/' if options[:deep]
+      xpath += "#{namespace}:" if namespace
+      xpath += tag
+      # puts "xpath: #{xpath}"
+      xpath
     end
     
     def primitive?
@@ -40,6 +71,10 @@ module HappyMapper
     
     def attribute?
       !element?
+    end
+    
+    def method_name
+      @method_name ||= name.tr('-', '_')
     end
     
     def typecast(value)
@@ -72,19 +107,26 @@ module HappyMapper
       end
     end
     
-    private      
-      def value_from_xml_node(node, namespace=nil)        
-        node.register_default_namespace(namespace.chop) if namespace
-        
+    private
+      def find(node, namespace, &block)
+        # this node has a custom namespace (that is present in the doc)
+        if self.namespace && node.namespaces.find_by_prefix(self.namespace)
+          # from the class definition
+          namespace = self.namespace
+        elsif options[:namespace] && node.namespaces.find_by_prefix(options[:namespace])
+          # from an element definition
+          namespace = options[:namespace]
+        end
+
         if element?
-          depth = options[:deep] ? './/' : ''
-          result = node.find_first("#{depth}#{namespace}#{tag}")
+          result = node.find_first(xpath(namespace))
+          # puts "vfxn: #{xpath} #{result.inspect}"
           if result
-            value = yield(result.content)
+            value = yield(result)
             if options[:attributes].is_a?(Hash)
               result.attributes.each do |xml_attribute|
                 if attribute_options = options[:attributes][xml_attribute.name.to_sym]
-                  attribute_value = Attribute.new(xml_attribute.name.to_sym, *attribute_options).from_xml_node(result)
+                  attribute_value = Attribute.new(xml_attribute.name.to_sym, *attribute_options).from_xml_node(result, namespace)
                   result.instance_eval <<-EOV
                     def value.#{xml_attribute.name}
                       #{attribute_value.inspect}
